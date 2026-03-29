@@ -1,4 +1,4 @@
-# YellowSquareMusicPlayer0.3
+# YellowSquareMusicPlayer0.4
 A basic command music player made in python
 
 IMPORTANT - This is a not commercial project, it was made for purely entretainment and learning, I don't have the license of any of this songs nor music
