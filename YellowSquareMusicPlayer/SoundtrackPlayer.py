@@ -6,13 +6,83 @@ import keyboard
 from colorama import Fore, Style
 from Timer import PlayTimer
 
-stop_event = threading.Event()
-pause_event = threading.Event()
-pause_event.set()  # El hilo comienza en estado no pausado
+# Variables globales
 timer_thread = None
+current_stop_event = None
+current_pause_event = None
+
+def PlayTimer(duracion_total, stop_event, pause_event):
+    minutos = 0
+    minutos_totales = int(duracion_total // 60)
+    segundos_totales = int(duracion_total % 60)
+    ancho_barra = 30  # Ancho de la barra de progreso
+    
+    while not stop_event.is_set():
+        for segundos in range(60):
+            tiempo_transcurrido = minutos * 60 + segundos
+            
+            if tiempo_transcurrido > duracion_total:
+                # Barra completa
+                barra = "█" * ancho_barra
+                print(f"\r{barra} {minutos:2d}:{segundos:02d} / {minutos_totales}:{segundos_totales:02d} [COMPLETADO]", end="", flush=True)
+                return
+            
+            # Calcular porcentaje y barra de progreso
+            porcentaje = tiempo_transcurrido / duracion_total
+            filled = int(ancho_barra * porcentaje)
+            barra = "█" * filled + "░" * (ancho_barra - filled)
+            
+            # Mostrar todo junto
+            print(f"\r{minutos:2d}:{segundos:02d} / {minutos_totales}:{segundos_totales:02d} {barra} ({porcentaje:.0%})", end="", flush=True)
+            
+            if stop_event.wait(1):
+                return
+            pause_event.wait()
+        minutos += 1
+
+def detener_timer_actual():
+    global timer_thread, current_stop_event, current_pause_event
+    
+    if current_stop_event:
+        current_stop_event.set()
+    
+    if timer_thread and timer_thread.is_alive():
+        timer_thread.join(timeout=0.5)
+    
+    timer_thread = None
+    current_stop_event = None
+    current_pause_event = None
+
+def iniciar_nuevo_timer(duracion_total):
+    global timer_thread, current_stop_event, current_pause_event
+    
+    # Detener el timer anterior completamente
+    detener_timer_actual()
+    
+    # Crear nuevos eventos para el nuevo timer
+    current_stop_event = threading.Event()
+    current_pause_event = threading.Event()
+    current_pause_event.set()  # Comienza no pausado
+    
+    # Crear y lanzar el nuevo hilo
+    timer_thread = threading.Thread(
+        target=PlayTimer, 
+        args=(duracion_total, current_stop_event, current_pause_event),
+        daemon=True
+    )
+    timer_thread.start()
+
+def pausar_timer():
+    if current_pause_event:
+        current_pause_event.clear()
+
+def reanudar_timer():
+    if current_pause_event:
+        current_pause_event.set()
 
 def PlaySoundtrack(folder, soundtrack_name):
-
+    global current_pause_event
+    
     file_path = os.path.join(folder, soundtrack_name)
     paused = False
     loop_enabled = False
@@ -26,80 +96,46 @@ def PlaySoundtrack(folder, soundtrack_name):
     name, _ = os.path.splitext(soundtrack_name)
     sonido = pygame.mixer.Sound(file_path)
     duracion_total = sonido.get_length()
-    segundos_totales = duracion_total % 60
-    minutos_totales = duracion_total // 60
-    minutos = 0
-    #status = "looping" if loop_enabled else "not looping"
-    #status = "🔂" if loop_enabled else "🔀"
+    
     print("")
     print(f"Now playing: {Fore.LIGHTYELLOW_EX}{name}{Style.RESET_ALL}")
     print("  <- key  | spacebar | ⬆ key | escape | -> key")
     print(" previous |  pause   | loop  |  exit  |  next ")
-    #print(f" Soundtrack duration: {minutos:2.0f}:{segundos:02.0f}") # :2.0f makes the code not showing the decimals
-
-    # Lanzar el temporizador en segundo plano
-    stop_event.clear()
-    t = threading.Thread(target=PlayTimer, daemon=True)
-    t.start()
-
+    
+    # Iniciar el timer para esta canción
+    iniciar_nuevo_timer(duracion_total)
+    
     while True:
-        evento = keyboard.read_event() #IMPORTANT: This should be change in case the device lenguage is other
+        evento = keyboard.read_event()
         if evento.event_type == keyboard.KEY_UP:
             if evento.name == "space":
                 if paused == False:
                     pygame.mixer.music.pause()
-                    pausar()
+                    pausar_timer()
                     paused = True
                 elif paused == True:
                     pygame.mixer.music.unpause()
-                    reanudar()
+                    reanudar_timer()
                     paused = False
-                else:
-                    print(Fore.LIGHTRED_EX + "ERR0R! How the fuck did you reach this error?" + Style.RESET_ALL)
-            if evento.name == "flecha arriba":
-                parar_timer()
+            
+            elif evento.name == "flecha arriba":
+                detener_timer_actual()
                 loop_enabled = not loop_enabled
                 pygame.mixer.music.play(loops=-1 if loop_enabled else 0)
-                status = "enabled" if loop_enabled else "disabled"
-                iniciar_timer()
-                print(f"Loop {status}")
-            if evento.name == "flecha izquierda":
-                parar_timer()
+                iniciar_nuevo_timer(duracion_total)
+                print(f"Loop {'enabled' if loop_enabled else 'disabled'}")
+            
+            elif evento.name == "flecha izquierda":
+                detener_timer_actual()
                 pygame.mixer.music.stop()
-                iniciar_timer()
                 return "previous"
-            if evento.name == "flecha derecha":
-                parar_timer()
+            
+            elif evento.name == "flecha derecha":
+                detener_timer_actual()
                 pygame.mixer.music.stop()
-                iniciar_timer()
                 return "next"
-            if evento.name == "esc":
-                parar_timer()
+            
+            elif evento.name == "esc":
+                detener_timer_actual()
                 pygame.mixer.music.stop()
                 return "exit"
-            
-def PlayTimer():
-    minutos = 0
-    while not stop_event.is_set():
-        for i in range(60):
-            print(f"\r{minutos}:{i:02d}", end="", flush=True)
-            if stop_event.wait(1):  # ⬅️ instead sleep
-                return
-            pause_event.wait()  # ⬅️ waits here if the thread is paused
-        minutos += 1
-
-def pausar():
-    pause_event.clear()  # pause the thread
-def reanudar():
-    pause_event.set()  # resume the thread
-
-def iniciar_timer():
-    global timer_thread
-    stop_event.clear()
-    timer_thread = threading.Thread(target=PlayTimer, daemon=True)
-    timer_thread.start()
-def parar_timer():
-    global timer_thread
-    stop_event.set()
-    if timer_thread is not None:
-        timer_thread.join()  # ⬅️ ESPERA a que muera el hilo
